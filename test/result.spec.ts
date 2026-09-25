@@ -1,4 +1,4 @@
-import { describe, expect, expectTypeOf, it } from "vitest";
+import { beforeEach, describe, expect, expectTypeOf, it } from "vitest";
 import * as jarl from "../index";
 
 class Invalid extends jarl.error.define("Invalid") {
@@ -51,7 +51,7 @@ describe("fn", () => {
   });
 });
 
-describe("map", () => {
+describe("pipe", () => {
   const length = jarl.fn(async (input: string) => {
     if (input.length === 0) {
       throw new Invalid("empty");
@@ -66,7 +66,7 @@ describe("map", () => {
     return `#${count}`;
   }, (error) => (error instanceof NotFound ? error : new NotFound("unknown")));
 
-  const pipeline = jarl.map(length, label);
+  const pipeline = jarl.pipe(length, label);
 
   it("chains each resolved value into the next promise", async () => {
     const result = await pipeline("hey");
@@ -109,6 +109,138 @@ describe("map", () => {
       throw new Error("expected NotFound");
     }
   });
+
+  it("replaces map, which is no longer exported", () => {
+    expect(jarl.pipe).toBeTypeOf("function");
+    expect(Object.keys(jarl)).not.toContain("map");
+    // @ts-expect-error map was renamed to pipe
+    expect(jarl.map).toBeUndefined();
+  });
+
+  describe("with three steps", () => {
+    class Forbidden extends jarl.error.define("Forbidden") {
+      constructor(readonly user: string) {
+        super(`${user} is not allowed in`);
+      }
+    }
+
+    type User = { id: number; name: string };
+    type Badge = { badge: string };
+
+    const calls: string[] = [];
+    beforeEach(() => {
+      calls.length = 0;
+    });
+
+    const count = jarl.fn(async (input: string) => {
+      calls.push("count");
+      if (input.length === 0) {
+        throw new Invalid("empty");
+      }
+      return input.length;
+    }, (error) => (error instanceof Invalid ? error : new Invalid("unknown")));
+
+    const lookup = jarl.fn(async (id: number): Promise<User> => {
+      calls.push("lookup");
+      if (id > 5) {
+        throw new NotFound(String(id));
+      }
+      return { id, name: id === 4 ? "mallory" : "alice" };
+    }, (error) => (error instanceof NotFound ? error : new NotFound("unknown")));
+
+    const admit = jarl.fn(async (user: User): Promise<Badge> => {
+      calls.push("admit");
+      if (user.name === "mallory") {
+        throw new Forbidden(user.name);
+      }
+      return { badge: `${user.name}-${user.id}` };
+    }, (error) => (error instanceof Forbidden ? error : new Forbidden("unknown")));
+
+    const badgeFor = jarl.pipe(count, lookup, admit);
+
+    it("infers the last value and the union of every step's error", async () => {
+      expectTypeOf(badgeFor).toEqualTypeOf<
+        (input: string) => Promise<jarl.Result<Badge, Invalid | NotFound | Forbidden>>
+      >();
+      expectTypeOf(badgeFor).parameters.toEqualTypeOf<[string]>();
+      expectTypeOf(badgeFor).returns.resolves.toEqualTypeOf<
+        jarl.Result<Badge, Invalid | NotFound | Forbidden>
+      >();
+
+      const result = await badgeFor("hey");
+
+      if (!jarl.is_ok(result)) {
+        throw result.error;
+      }
+      expect(result.value).toEqual({ badge: "alice-3" });
+      expect(calls).toEqual(["count", "lookup", "admit"]);
+    });
+
+    it("stops at the first step's error", async () => {
+      const result = await badgeFor("");
+
+      if (!jarl.error.is(result, Invalid)) {
+        throw new Error("expected Invalid");
+      }
+      expect(result.error.reason).toBe("empty");
+      expect(calls).toEqual(["count"]);
+    });
+
+    it("stops at the second step's error", async () => {
+      const result = await badgeFor("too-long");
+
+      if (!jarl.error.is(result, NotFound)) {
+        throw new Error("expected NotFound");
+      }
+      expect(result.error.id).toBe("8");
+      expect(calls).toEqual(["count", "lookup"]);
+    });
+
+    it("returns the third step's error", async () => {
+      const result = await badgeFor("four");
+
+      if (!jarl.error.is(result, Forbidden)) {
+        throw new Error("expected Forbidden");
+      }
+      expect(result.error.user).toBe("mallory");
+      expect(calls).toEqual(["count", "lookup", "admit"]);
+    });
+
+    it("rejects a step whose input is not the previous step's value", () => {
+      // @ts-expect-error admit takes a User, but count produces a number
+      jarl.pipe(count, admit);
+      // @ts-expect-error lookup takes a number, but lookup produces a User
+      jarl.pipe(count, lookup, lookup);
+    });
+
+    it("only allows value once all three errors are handled", async () => {
+      const result = await badgeFor("hey");
+
+      expect(() => {
+        // @ts-expect-error Invalid, NotFound and Forbidden are all still possible
+        jarl.value(result);
+      }).not.toThrow();
+
+      if (jarl.error.is(result, Invalid)) {
+        throw result.error;
+      }
+      if (jarl.error.is(result, NotFound)) {
+        throw result.error;
+      }
+
+      expect(() => {
+        // @ts-expect-error Forbidden is still possible
+        jarl.value(result);
+      }).not.toThrow();
+
+      if (jarl.error.is(result, Forbidden)) {
+        throw result.error;
+      }
+
+      expectTypeOf(result).toEqualTypeOf<jarl.Result<Badge, never>>();
+      expect(jarl.value(result)).toEqual({ badge: "alice-3" });
+    });
+  });
 });
 
 describe("parseJSON", () => {
@@ -143,7 +275,7 @@ describe("parseJSON", () => {
       return raw;
     }, (error) => (error instanceof Invalid ? error : new Invalid("unknown")));
 
-    const load = jarl.map(read, (text) => jarl.parseJSON<{ n: number }>(text));
+    const load = jarl.pipe(read, (text) => jarl.parseJSON<{ n: number }>(text));
     const parsed = await load("");
     const broken = await load("{");
 
@@ -178,7 +310,7 @@ describe("parseJSON", () => {
       error instanceof TypeError ? error : new TypeError(String(error)),
     );
 
-    const load = jarl.map(read, (text) => jarl.parseJSON<{ n: number }>(text));
+    const load = jarl.pipe(read, (text) => jarl.parseJSON<{ n: number }>(text));
     const broken = await load("{");
 
     expectTypeOf(broken).toEqualTypeOf<

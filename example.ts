@@ -14,7 +14,7 @@ const divide = jarl.fn(async (a: number, b: number) => {
     : new DivideByZero("cannot divide by zero"),
 );
 
-const doubled = jarl.map(
+const doubled = jarl.pipe(
   divide,
   jarl.fn(async (n: number) => n * 2, () => new DivideByZero("cannot double")),
 );
