@@ -12,6 +12,20 @@ type Step<In, Out, E> = ResultFn<[In], Out, E>;
 
 type Ctor<T> = abstract new (...args: any[]) => T;
 
+// Read off the result rather than inferred through `Err<E>`: inference picks
+// a single candidate from a union of `{ ok: false }` branches, not all of them.
+type ErrorOf<R> = R extends { ok: false; error: infer E } ? E : never;
+
+// The branches of R whose error is C. A C that only subclasses one of the
+// errors narrows that branch to C.
+type Narrow<R, C> = R extends { ok: false; error: infer E }
+  ? [E] extends [C]
+    ? R
+    : [C] extends [E]
+      ? R & Err<C>
+      : never
+  : never;
+
 function isResult(value: unknown): value is Result<unknown, unknown> {
   if (typeof value !== "object" || value === null) {
     return false;
@@ -208,10 +222,10 @@ function is_err<T, E>(result: Result<T, E>): result is Err<E> {
   return !result.ok;
 }
 
-function is<T, E, C extends E>(
-  result: Result<T, E>,
+function is<R extends Result<unknown, unknown>, C extends ErrorOf<R>>(
+  result: R,
   ctor: Ctor<C>,
-): result is Err<C>;
+): result is Narrow<R, C>;
 
 function is<C>(error: unknown, ctor: Ctor<C>): error is C;
 

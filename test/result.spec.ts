@@ -273,6 +273,65 @@ describe("error.is", () => {
 
     expect(jarl.error.is(new Weird("weird"), Weird)).toBe(true);
   });
+
+  describe("on a union of three errors", () => {
+    class Red extends jarl.error.define("Red") {}
+    class Green extends jarl.error.define("Green") {}
+    class Blue extends jarl.error.define("Blue") {}
+
+    const paint = (
+      color: "red" | "green" | "blue" | "none",
+    ): jarl.Result<"none", Red | Green | Blue> => {
+      if (color === "red") {
+        return jarl.err(new Red());
+      }
+      if (color === "green") {
+        return jarl.err(new Green());
+      }
+      if (color === "blue") {
+        return jarl.err(new Blue());
+      }
+      return jarl.ok(color);
+    };
+
+    it("removes one error at a time until only the value is left", () => {
+      const result = paint("none");
+
+      if (jarl.error.is(result, Red)) {
+        throw result.error;
+      }
+      expectTypeOf(result).toEqualTypeOf<jarl.Result<"none", Green | Blue>>();
+
+      if (jarl.error.is(result, Green)) {
+        expectTypeOf(result.error).toEqualTypeOf<Green>();
+        throw result.error;
+      }
+      expectTypeOf(result).toEqualTypeOf<jarl.Result<"none", Blue>>();
+
+      if (jarl.error.is(result, Blue)) {
+        expectTypeOf(result.error).toEqualTypeOf<Blue>();
+        throw result.error;
+      }
+      expectTypeOf(result).toEqualTypeOf<jarl.Result<"none", never>>();
+      expect(jarl.value(result)).toBe("none");
+    });
+
+    it("narrows to the error that is actually there", () => {
+      const result = paint("blue");
+
+      if (jarl.error.is(result, Red)) {
+        throw new Error("expected Blue");
+      }
+      if (jarl.error.is(result, Green)) {
+        throw new Error("expected Blue");
+      }
+      if (!jarl.error.is(result, Blue)) {
+        throw new Error("expected Blue");
+      }
+      expectTypeOf(result.error).toEqualTypeOf<Blue>();
+      expect(result.error).toBeInstanceOf(Blue);
+    });
+  });
 });
 
 describe("unwrap", () => {
