@@ -13,7 +13,6 @@
   },
   "files": [
     "index.ts",
-    "result.ts",
     "README.md"
   ],
   "devDependencies": {

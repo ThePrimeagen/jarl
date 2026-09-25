@@ -1,240 +1,276 @@
-export type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
-type OkResult<T> = { ok: true; value: T };
-type ErrResult<E> = { ok: false; error: E };
+export type Result<T, E> = { ok: true; value: T } | Err<E>;
 
-type MaybePromise<T> = T | Promise<T>;
-type ResultFn<A extends unknown[], T, E> = (
+// One `{ ok: false }` branch per error, so `error.is` can drop that error
+// from the union and leave the rest.
+type Err<E> = E extends any ? { ok: false; error: E } : never;
+
+type ResultFn<A extends readonly unknown[], T, E> = (
   ...args: A
 ) => Promise<Result<T, E>>;
 
-type UnaryResultFn = ResultFn<[unknown], unknown, Error>;
+type Step<In, Out, E> = ResultFn<[In], Out, E>;
 
-function normalizeError(err: unknown): Error {
-  if (err instanceof Error) {
-    return err;
-  }
-
-  try {
-    const asJson = JSON.stringify(err);
-    return new Error(asJson ?? String(err));
-  } catch {
-    return new Error(String(err));
-  }
-}
+type Ctor<T> = abstract new (...args: any[]) => T;
 
 function isResult(value: unknown): value is Result<unknown, unknown> {
   if (typeof value !== "object" || value === null) {
     return false;
   }
 
-  if (!("ok" in value)) {
+  if (!("ok" in value) || typeof value.ok !== "boolean") {
     return false;
   }
 
-  return typeof (value as { ok: unknown }).ok === "boolean";
+  if (value.ok) {
+    return "value" in value;
+  }
+
+  return "error" in value;
 }
 
-function fn<A extends unknown[], T>(
-  inner: (...args: A) => MaybePromise<T | Result<T, Error>>,
-): ResultFn<A, T, Error>;
+function fn<A extends unknown[], T, E>(
+  inner: (...args: A) => Promise<T>,
+  mapError: (error: unknown, ...args: A) => E,
+): ResultFn<A, T, E>;
 
 function fn<A extends unknown[], T>(
-  inner: (...args: A) => MaybePromise<T | Result<T, Error>>,
-  mapError: (e: Error, ...args: A) => unknown,
-): ResultFn<A, T, Error>;
+  inner: (...args: A) => Promise<T>,
+): ResultFn<A, T, unknown>;
 
-function fn<A extends unknown[], T>(
-  inner: (...args: A) => MaybePromise<T | Result<T, Error>>,
-  mapError?: (e: Error, ...args: A) => unknown,
-): ResultFn<A, T, Error> {
-  return async (...args: A) => {
+function fn<A extends unknown[], T, E>(
+  inner: (...args: A) => Promise<T>,
+  mapError?: (error: unknown, ...args: A) => E,
+): ResultFn<A, T, E | unknown> {
+  return async (...args) => {
     try {
       const value = await inner(...args);
-
-      if (isResult(value)) {
-        if (value.ok) {
-          return { ok: true as const, value: value.value as T };
-        }
-
-        const normalized = normalizeError(value.error);
-        return {
-          ok: false as const,
-          error: mapError
-            ? normalizeError(mapError(normalized, ...args))
-            : normalized,
-        };
-      }
-
-      return { ok: true as const, value };
-    } catch (e) {
-      const normalized = normalizeError(e);
-      return {
-        ok: false as const,
-        error: mapError
-          ? normalizeError(mapError(normalized, ...args))
-          : normalized,
-      };
+      return { ok: true, value };
+    } catch (caught) {
+      const error = mapError ? mapError(caught, ...args) : caught;
+      return { ok: false, error } as Result<T, E | unknown>;
     }
   };
 }
 
-function map<A extends unknown[], T, E extends Error>(
+function map<A extends unknown[], T, E>(
   first: ResultFn<A, T, E>,
-): ResultFn<A, T, Error>;
+): ResultFn<A, T, E>;
 
-function map<A extends unknown[], T, E extends Error, T1, E1 extends Error>(
+function map<A extends unknown[], T, E, T1, E1>(
   first: ResultFn<A, T, E>,
-  m1: ResultFn<[T], T1, E1>,
-): ResultFn<A, T1, Error>;
+  step1: Step<T, T1, E1>,
+): ResultFn<A, T1, E | E1>;
+
+function map<A extends unknown[], T, E, T1, E1, T2, E2>(
+  first: ResultFn<A, T, E>,
+  step1: Step<T, T1, E1>,
+  step2: Step<T1, T2, E2>,
+): ResultFn<A, T2, E | E1 | E2>;
+
+function map<A extends unknown[], T, E, T1, E1, T2, E2, T3, E3>(
+  first: ResultFn<A, T, E>,
+  step1: Step<T, T1, E1>,
+  step2: Step<T1, T2, E2>,
+  step3: Step<T2, T3, E3>,
+): ResultFn<A, T3, E | E1 | E2 | E3>;
+
+function map<A extends unknown[], T, E, T1, E1, T2, E2, T3, E3, T4, E4>(
+  first: ResultFn<A, T, E>,
+  step1: Step<T, T1, E1>,
+  step2: Step<T1, T2, E2>,
+  step3: Step<T2, T3, E3>,
+  step4: Step<T3, T4, E4>,
+): ResultFn<A, T4, E | E1 | E2 | E3 | E4>;
 
 function map<
   A extends unknown[],
   T,
-  E extends Error,
+  E,
   T1,
-  E1 extends Error,
+  E1,
   T2,
-  E2 extends Error,
->(
-  first: ResultFn<A, T, E>,
-  m1: ResultFn<[T], T1, E1>,
-  m2: ResultFn<[T1], T2, E2>,
-): ResultFn<A, T2, Error>;
-
-function map<
-  A extends unknown[],
-  T,
-  E extends Error,
-  T1,
-  E1 extends Error,
-  T2,
-  E2 extends Error,
+  E2,
   T3,
-  E3 extends Error,
->(
-  first: ResultFn<A, T, E>,
-  m1: ResultFn<[T], T1, E1>,
-  m2: ResultFn<[T1], T2, E2>,
-  m3: ResultFn<[T2], T3, E3>,
-): ResultFn<A, T3, Error>;
-
-function map<
-  A extends unknown[],
-  T,
-  E extends Error,
-  T1,
-  E1 extends Error,
-  T2,
-  E2 extends Error,
-  T3,
-  E3 extends Error,
+  E3,
   T4,
-  E4 extends Error,
->(
-  first: ResultFn<A, T, E>,
-  m1: ResultFn<[T], T1, E1>,
-  m2: ResultFn<[T1], T2, E2>,
-  m3: ResultFn<[T2], T3, E3>,
-  m4: ResultFn<[T3], T4, E4>,
-): ResultFn<A, T4, Error>;
-
-function map<
-  A extends unknown[],
-  T,
-  E extends Error,
-  T1,
-  E1 extends Error,
-  T2,
-  E2 extends Error,
-  T3,
-  E3 extends Error,
-  T4,
-  E4 extends Error,
+  E4,
   T5,
-  E5 extends Error,
+  E5,
 >(
   first: ResultFn<A, T, E>,
-  m1: ResultFn<[T], T1, E1>,
-  m2: ResultFn<[T1], T2, E2>,
-  m3: ResultFn<[T2], T3, E3>,
-  m4: ResultFn<[T3], T4, E4>,
-  m5: ResultFn<[T4], T5, E5>,
-): ResultFn<A, T5, Error>;
+  step1: Step<T, T1, E1>,
+  step2: Step<T1, T2, E2>,
+  step3: Step<T2, T3, E3>,
+  step4: Step<T3, T4, E4>,
+  step5: Step<T4, T5, E5>,
+): ResultFn<A, T5, E | E1 | E2 | E3 | E4 | E5>;
 
 function map(
-  first: ResultFn<unknown[], unknown, Error>,
-  ...rest: UnaryResultFn[]
-): ResultFn<unknown[], unknown, Error> {
-  return async (...args: unknown[]) => {
-    const firstResult = await first(...args);
-
-    if (!firstResult.ok) {
-      return {
-        ok: false as const,
-        error: normalizeError(firstResult.error),
-      };
-    }
-
-    let value: unknown = firstResult.value;
+  first: (...args: never[]) => Promise<Result<unknown, unknown>>,
+  ...rest: Array<(value: never) => Promise<Result<unknown, unknown>>>
+): (...args: never[]) => Promise<Result<unknown, unknown>> {
+  return async (...args) => {
+    let current = await first(...args);
 
     for (const step of rest) {
-      const nextResult = await step(value);
-
-      if (!nextResult.ok) {
-        return {
-          ok: false as const,
-          error: normalizeError(nextResult.error),
-        };
+      if (!current.ok) {
+        return current;
       }
-
-      value = nextResult.value;
+      current = await step(current.value as never);
     }
 
-    return {
-      ok: true as const,
-      value,
-    };
+    return current;
   };
 }
 
-async function or_else<V, E>(
-  p: Promise<Result<V, E>> | Result<V, E>,
-  d: V,
-): Promise<V> {
+async function parseJSON<T = unknown>(
+  input: string | Promise<string>,
+): Promise<Result<T, JsonError>> {
+  let text: string;
   try {
-    const result = await p;
+    text = await input;
+  } catch (caught) {
+    return { ok: false, error: jsonError(caught) };
+  }
+
+  try {
+    return { ok: true, value: JSON.parse(text) as T };
+  } catch (caught) {
+    return { ok: false, error: jsonError(caught) };
+  }
+}
+
+function jsonError(caught: unknown): JsonError {
+  if (caught instanceof JsonError) {
+    return caught;
+  }
+  return new JsonError(caught);
+}
+
+function value<T>(result: Result<T, never>): T {
+  // `never` has no error branch in the type system. The cast keeps a runtime
+  // check for errors TypeScript collapsed into the success path.
+  const settled = result as Result<T, unknown>;
+  if (!settled.ok) {
+    throw settled.error;
+  }
+  return settled.value;
+}
+
+function unwrap<T, E>(result: Result<T, E>): T;
+function unwrap<T, E>(result: Promise<Result<T, E>>): Promise<T>;
+function unwrap<T, E>(
+  result: Result<T, E> | Promise<Result<T, E>>,
+): T | Promise<T> {
+  if (isResult(result)) {
     if (result.ok) {
-      return result.value;
+      return result.value as T;
     }
-  } catch {}
-  return d;
+    throw result.error;
+  }
+
+  return result.then((settled) => {
+    if (settled.ok) {
+      return settled.value;
+    }
+    throw settled.error;
+  });
 }
 
-function err<E>(e: E): Result<never, E> {
-  return { ok: false, error: e };
+async function or_else<T, E>(
+  result: Promise<Result<T, E>>,
+  fallback: T,
+): Promise<T> {
+  try {
+    const settled = await result;
+    if (settled.ok) {
+      return settled.value;
+    }
+  } catch {
+    // A rejected promise is the same outcome as an error result.
+  }
+  return fallback;
 }
 
-function ok<T>(t: T): Result<T, never> {
-  return { ok: true, value: t };
+function ok<T>(value: T): Result<T, never> {
+  return { ok: true, value };
 }
 
-function is_ok<T, E>(result: Result<T, E>): result is OkResult<T> {
+function err<E>(error: E): Result<never, E> {
+  return { ok: false, error } as Result<never, E>;
+}
+
+function is_ok<T, E>(result: Result<T, E>): result is { ok: true; value: T } {
   return result.ok;
 }
 
-function is_err<T, E>(result: Result<T, E>): result is ErrResult<E> {
+function is_err<T, E>(result: Result<T, E>): result is Err<E> {
   return !result.ok;
 }
 
-function value<T, E>(result: Result<T, E>): T {
-  if (result.ok) {
-    return result.value;
+function is<T, E, C extends E>(
+  result: Result<T, E>,
+  ctor: Ctor<C>,
+): result is Err<C>;
+
+function is<C>(error: unknown, ctor: Ctor<C>): error is C;
+
+function is(value: unknown, ctor: Ctor<unknown>): boolean {
+  if (value instanceof ctor) {
+    return true;
   }
-  throw result.error;
+  if (isResult(value)) {
+    return !value.ok && value.error instanceof ctor;
+  }
+  return false;
 }
 
-async function pvalue<T, E>(p: Promise<Result<T, E>>): Promise<T> {
-  return value(await p);
+// A private field keeps different names apart. The same name is one type:
+// two classes that both call define("NotFound") collapse together.
+function define<const Name extends string>(name: Name) {
+  return class JarlError extends Error {
+    readonly #kind: Name;
+    constructor(message?: string) {
+      super(message);
+      this.name = name;
+      this.#kind = name;
+    }
+    get [Symbol.toStringTag]() {
+      return this.#kind;
+    }
+  };
 }
 
-export { pvalue, value, err, fn, map, or_else, ok, is_ok, is_err };
+// Not an `Error` subclass: built-in errors are structurally identical, so a
+// `SyntaxError` in the union would disappear when another one was handled.
+class JsonError {
+  readonly #kind = "JsonError" as const;
+  readonly message: string;
+  readonly caught: unknown;
+
+  constructor(caught: unknown) {
+    this.caught = caught;
+    this.message = caught instanceof Error ? caught.message : String(caught);
+  }
+
+  get [Symbol.toStringTag]() {
+    return this.#kind;
+  }
+}
+
+const error = { define, is };
+
+export {
+  JsonError,
+  err,
+  error,
+  fn,
+  is_err,
+  is_ok,
+  map,
+  ok,
+  or_else,
+  parseJSON,
+  unwrap,
+  value,
+};

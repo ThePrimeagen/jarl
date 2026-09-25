@@ -1,34 +1,29 @@
 # jarl
 Just Another Result Library
 
-## Usage
+Every operation returns `Promise<Result<Value, Error>>`. `map` keeps the value from the last step and unions the error from every step. `error.is` removes the error you handled from that union. Once nothing is left, the error type is `never`, and `value` will accept the result. `unwrap` throws whatever error is still there. Define error classes with `error.define` so each name stays in that union, even when the class has no fields of its own.
+
+The tests in `test/result.spec.ts` are the usage examples.
 
 ```ts
-import { fn, map, is_ok, is_err, or_else } from "./index";
+import * as jarl from "jarl";
 
-const divide = fn(async (a: number, b: number): Promise<number> => {
+class DivideByZero extends jarl.error.define("DivideByZero") {}
+
+const divide = jarl.fn(async (a: number, b: number) => {
+  if (b === 0) throw new DivideByZero("cannot divide by zero");
   return a / b;
-});
+}, (error) =>
+  error instanceof DivideByZero
+    ? error
+    : new DivideByZero("cannot divide by zero"),
+);
 
 const result = await divide(10, 2);
-console.log("result", result);
 
-if (is_ok(result)) {
-  console.log(result.value); // 5
+if (jarl.error.is(result, DivideByZero)) {
+  console.log(result.error.message);
+} else {
+  console.log(jarl.value(result));
 }
-
-const double = fn((x: number) => x * 2);
-const result_doubled = await map(divide, double)(10, 2);
-console.log("doubled with map", result_doubled);
-
-const failure = fn((x: number) => {
-  throw new Error("hoobastank");
-});
-
-const failed = await failure(10);
-
-// or_else is async, so its forced to be async.  I may separate this in the
-// future, but this library is to prevent me having to do error handling.  Therefore,
-// i am using or_else always with async functions.
-console.log("error", is_err(failed), await or_else(failed, 69));
 ```
