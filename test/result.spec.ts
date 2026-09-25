@@ -463,6 +463,49 @@ describe("error.is", () => {
       expectTypeOf(result.error).toEqualTypeOf<Blue>();
       expect(result.error).toBeInstanceOf(Blue);
     });
+
+    it("lets unwrap read the value once error.is has removed an error", () => {
+      const result = paint("none");
+      if (jarl.error.is(result, Red)) {
+        throw result.error;
+      }
+      expectTypeOf(jarl.unwrap(result)).toEqualTypeOf<"none">();
+      expect(jarl.unwrap(result)).toBe("none");
+    });
+
+    it("lets unwrap throw an error error.is left behind", () => {
+      const result = paint("blue");
+      if (jarl.error.is(result, Red)) {
+        throw new Error("expected Blue");
+      }
+      expect(() => jarl.unwrap(result)).toThrow(Blue);
+    });
+
+    it("lets is_ok split what error.is left into the value and the other errors", () => {
+      const result = paint("green");
+      if (jarl.error.is(result, Red)) {
+        throw new Error("expected Green");
+      }
+      if (jarl.is_ok(result)) {
+        expectTypeOf(result.value).toEqualTypeOf<"none">();
+        throw new Error("expected Green");
+      }
+      expectTypeOf(result.error).toEqualTypeOf<Green | Blue>();
+      expect(result.error).toBeInstanceOf(Green);
+    });
+
+    it("lets is_err narrow what error.is left to the other errors", () => {
+      const result = paint("blue");
+      if (jarl.error.is(result, Red)) {
+        throw new Error("expected Blue");
+      }
+      if (!jarl.is_err(result)) {
+        expectTypeOf(result.value).toEqualTypeOf<"none">();
+        throw new Error("expected Blue");
+      }
+      expectTypeOf(result.error).toEqualTypeOf<Green | Blue>();
+      expect(result.error).toBeInstanceOf(Blue);
+    });
   });
 });
 

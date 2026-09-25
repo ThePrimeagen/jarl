@@ -16,6 +16,10 @@ type Ctor<T> = abstract new (...args: any[]) => T;
 // a single candidate from a union of `{ ok: false }` branches, not all of them.
 type ErrorOf<R> = R extends { ok: false; error: infer E } ? E : never;
 
+// The value, read off the result for the same reason. Functions that take a
+// result take the whole of it as R, so one error.is has narrowed still fits.
+type ValueOf<R> = R extends { ok: true; value: infer T } ? T : never;
+
 // The branches of R whose error is C. A C that only subclasses one of the
 // errors narrows that branch to C.
 type Narrow<R, C> = R extends { ok: false; error: infer E }
@@ -171,14 +175,16 @@ function value<T>(result: Result<T, never>): T {
   return settled.value;
 }
 
-function unwrap<T, E>(result: Result<T, E>): T;
-function unwrap<T, E>(result: Promise<Result<T, E>>): Promise<T>;
-function unwrap<T, E>(
-  result: Result<T, E> | Promise<Result<T, E>>,
-): T | Promise<T> {
+function unwrap<R extends Result<unknown, unknown>>(result: R): ValueOf<R>;
+function unwrap<R extends Result<unknown, unknown>>(
+  result: Promise<R>,
+): Promise<ValueOf<R>>;
+function unwrap(
+  result: Result<unknown, unknown> | Promise<Result<unknown, unknown>>,
+): unknown {
   if (isResult(result)) {
     if (result.ok) {
-      return result.value as T;
+      return result.value;
     }
     throw result.error;
   }
@@ -214,11 +220,15 @@ function err<E>(error: E): Result<never, E> {
   return { ok: false, error } as Result<never, E>;
 }
 
-function is_ok<T, E>(result: Result<T, E>): result is { ok: true; value: T } {
+function is_ok<R extends Result<unknown, unknown>>(
+  result: R,
+): result is Extract<R, { ok: true }> {
   return result.ok;
 }
 
-function is_err<T, E>(result: Result<T, E>): result is Err<E> {
+function is_err<R extends Result<unknown, unknown>>(
+  result: R,
+): result is Extract<R, { ok: false }> {
   return !result.ok;
 }
 
