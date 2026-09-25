@@ -12,6 +12,20 @@ type Step<In, Out, E> = ResultFn<[In], Out, E>;
 
 type Ctor<T> = abstract new (...args: any[]) => T;
 
+// Read off the result rather than inferred through `Err<E>`: inference picks
+// a single candidate from a union of `{ ok: false }` branches, not all of them.
+type ErrorOf<R> = R extends { ok: false; error: infer E } ? E : never;
+
+// The branches of R whose error is C. A C that only subclasses one of the
+// errors narrows that branch to C.
+type Narrow<R, C> = R extends { ok: false; error: infer E }
+  ? [E] extends [C]
+    ? R
+    : [C] extends [E]
+      ? R & Err<C>
+      : never
+  : never;
+
 function isResult(value: unknown): value is Result<unknown, unknown> {
   if (typeof value !== "object" || value === null) {
     return false;
@@ -52,29 +66,29 @@ function fn<A extends unknown[], T, E>(
   };
 }
 
-function map<A extends unknown[], T, E>(
+function pipe<A extends unknown[], T, E>(
   first: ResultFn<A, T, E>,
 ): ResultFn<A, T, E>;
 
-function map<A extends unknown[], T, E, T1, E1>(
+function pipe<A extends unknown[], T, E, T1, E1>(
   first: ResultFn<A, T, E>,
   step1: Step<T, T1, E1>,
 ): ResultFn<A, T1, E | E1>;
 
-function map<A extends unknown[], T, E, T1, E1, T2, E2>(
+function pipe<A extends unknown[], T, E, T1, E1, T2, E2>(
   first: ResultFn<A, T, E>,
   step1: Step<T, T1, E1>,
   step2: Step<T1, T2, E2>,
 ): ResultFn<A, T2, E | E1 | E2>;
 
-function map<A extends unknown[], T, E, T1, E1, T2, E2, T3, E3>(
+function pipe<A extends unknown[], T, E, T1, E1, T2, E2, T3, E3>(
   first: ResultFn<A, T, E>,
   step1: Step<T, T1, E1>,
   step2: Step<T1, T2, E2>,
   step3: Step<T2, T3, E3>,
 ): ResultFn<A, T3, E | E1 | E2 | E3>;
 
-function map<A extends unknown[], T, E, T1, E1, T2, E2, T3, E3, T4, E4>(
+function pipe<A extends unknown[], T, E, T1, E1, T2, E2, T3, E3, T4, E4>(
   first: ResultFn<A, T, E>,
   step1: Step<T, T1, E1>,
   step2: Step<T1, T2, E2>,
@@ -82,7 +96,7 @@ function map<A extends unknown[], T, E, T1, E1, T2, E2, T3, E3, T4, E4>(
   step4: Step<T3, T4, E4>,
 ): ResultFn<A, T4, E | E1 | E2 | E3 | E4>;
 
-function map<
+function pipe<
   A extends unknown[],
   T,
   E,
@@ -105,7 +119,7 @@ function map<
   step5: Step<T4, T5, E5>,
 ): ResultFn<A, T5, E | E1 | E2 | E3 | E4 | E5>;
 
-function map(
+function pipe(
   first: (...args: never[]) => Promise<Result<unknown, unknown>>,
   ...rest: Array<(value: never) => Promise<Result<unknown, unknown>>>
 ): (...args: never[]) => Promise<Result<unknown, unknown>> {
@@ -208,10 +222,10 @@ function is_err<T, E>(result: Result<T, E>): result is Err<E> {
   return !result.ok;
 }
 
-function is<T, E, C extends E>(
-  result: Result<T, E>,
+function is<R extends Result<unknown, unknown>, C extends ErrorOf<R>>(
+  result: R,
   ctor: Ctor<C>,
-): result is Err<C>;
+): result is Narrow<R, C>;
 
 function is<C>(error: unknown, ctor: Ctor<C>): error is C;
 
@@ -267,10 +281,10 @@ export {
   fn,
   is_err,
   is_ok,
-  map,
   ok,
   or_else,
   parseJSON,
+  pipe,
   unwrap,
   value,
 };

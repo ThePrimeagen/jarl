@@ -1,9 +1,9 @@
 # jarl
 Just Another Result Library
 
-Every operation returns `Promise<Result<Value, Error>>`. `map` keeps the value from the last step and unions the error from every step. `error.is` removes the error you handled from that union. Once nothing is left, the error type is `never`, and `value` will accept the result. `unwrap` throws whatever error is still there. Define error classes with `error.define` so each name stays in that union, even when the class has no fields of its own.
+Every operation returns `Promise<Result<Value, Error>>`. `pipe` keeps the value from the last step and unions the error from every step. `error.is` removes the error you handled from that union. Once nothing is left, the error type is `never`, and `value` will accept the result. `unwrap` throws whatever error is still there. Define error classes with `error.define` so each name stays in that union, even when the class has no fields of its own.
 
-The tests in `test/result.spec.ts` are the usage examples.
+The tests in `test/result.spec.ts` are the usage examples. `examples/checkout.ts` pipes three steps that each fail with a different error and proves at compile time that the result is `Promise<Result<Receipt, InvalidOrder | OutOfStock | PaymentDeclined>>`. Run it with `bun examples/checkout.ts`.
 
 ```ts
 import * as jarl from "jarl";
