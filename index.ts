@@ -249,6 +249,20 @@ async function or_else<T, E>(
   return fallback;
 }
 
+function forget<A extends unknown[]>(
+  inner: (...args: A) => Promise<unknown>,
+  ...args: A
+): void {
+  // Called inside an async function so a synchronous throw is caught too.
+  void (async () => {
+    try {
+      await inner(...args);
+    } catch {
+      // Nobody is waiting for the outcome.
+    }
+  })();
+}
+
 function ok<T>(value: T): Result<T, never> {
   return { ok: true, value };
 }
@@ -327,6 +341,7 @@ export {
   err,
   error,
   fn,
+  forget,
   is_err,
   is_ok,
   ok,
