@@ -243,6 +243,174 @@ describe("pipe", () => {
   });
 });
 
+describe("all", () => {
+  class Timeout extends jarl.error.define("Timeout") {
+    constructor(readonly ms: number) {
+      super(`timed out after ${ms}ms`);
+    }
+  }
+
+  type User = { id: string; name: string };
+  type Post = { title: string };
+
+  const user = jarl.fn(async (id: string): Promise<User> => {
+    if (id === "ghost") {
+      throw new NotFound(id);
+    }
+    return { id, name: `user ${id}` };
+  }, (error, id) => (error instanceof NotFound ? error : new NotFound(id)));
+
+  const posts = jarl.fn(async (id: string): Promise<Post[]> => {
+    if (id === "slow" || id === "ghost") {
+      throw new Timeout(100);
+    }
+    return [{ title: `post by ${id}` }];
+  }, (error) => (error instanceof Timeout ? error : new Timeout(0)));
+
+  const score = jarl.fn(async (id: string | number): Promise<number> => {
+    const length = String(id).length;
+    if (length > 4) {
+      throw new Invalid("too long");
+    }
+    return length;
+  }, (error) => (error instanceof Invalid ? error : new Invalid("unknown")));
+
+  const profile = jarl.all(user, posts, score);
+
+  it("infers one result per function, in order, from the arguments they all take", () => {
+    expectTypeOf(profile).toEqualTypeOf<
+      (
+        id: string,
+      ) => Promise<
+        [
+          jarl.Result<User, NotFound>,
+          jarl.Result<Post[], Timeout>,
+          jarl.Result<number, Invalid>,
+        ]
+      >
+    >();
+  });
+
+  it("calls every function with the same arguments and keeps their order", async () => {
+    const [found, written, scored] = await profile("7");
+
+    expect(jarl.unwrap(found)).toEqual({ id: "7", name: "user 7" });
+    expect(jarl.unwrap(written)).toEqual([{ title: "post by 7" }]);
+    expect(jarl.unwrap(scored)).toBe(1);
+  });
+
+  it("gives a one-element tuple for a single function", async () => {
+    const alone = jarl.all(user);
+
+    expectTypeOf(alone).returns.resolves.toEqualTypeOf<
+      [jarl.Result<User, NotFound>]
+    >();
+    const results = await alone("7");
+    expect(results).toHaveLength(1);
+    expect(jarl.unwrap(results[0])).toEqual({ id: "7", name: "user 7" });
+  });
+
+  it("passes every argument along", async () => {
+    const add = jarl.fn(async (a: number, b: number) => a + b);
+    const multiply = jarl.fn(async (a: number, b: number) => a * b);
+    const both = jarl.all(add, multiply);
+
+    expectTypeOf(both).parameters.toEqualTypeOf<[number, number]>();
+    const [sum, product] = await both(2, 3);
+    expect(jarl.unwrap(sum)).toBe(5);
+    expect(jarl.unwrap(product)).toBe(6);
+  });
+
+  it("accepts a function that takes nothing beside ones that take arguments", async () => {
+    const config = jarl.fn(async () => ({ region: "eu" }));
+    const loaded = jarl.all(config, user);
+
+    expectTypeOf(loaded).parameters.toEqualTypeOf<[string]>();
+    const [settings, found] = await loaded("7");
+    expect(jarl.unwrap(settings)).toEqual({ region: "eu" });
+    expect(jarl.unwrap(found)).toEqual({ id: "7", name: "user 7" });
+  });
+
+  it("runs the functions at the same time rather than one after another", async () => {
+    const events: string[] = [];
+    const slow = jarl.fn(async (n: number) => {
+      events.push("slow start");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      events.push("slow end");
+      return n;
+    });
+    const fast = jarl.fn(async (n: number) => {
+      events.push("fast start");
+      events.push("fast end");
+      return n;
+    });
+
+    await jarl.all(slow, fast)(1);
+
+    expect(events).toEqual(["slow start", "fast start", "fast end", "slow end"]);
+  });
+
+  it("keeps the other results when one function fails", async () => {
+    const [found, written, scored] = await profile("slow");
+
+    if (!jarl.error.is(written, Timeout)) {
+      throw new Error("expected Timeout");
+    }
+    expect(written.error.ms).toBe(100);
+    expect(jarl.unwrap(found)).toEqual({ id: "slow", name: "user slow" });
+    expect(jarl.unwrap(scored)).toBe(4);
+  });
+
+  it("gives each failing function only its own error", async () => {
+    const [found, written, scored] = await profile("ghost");
+
+    expectTypeOf(found).toEqualTypeOf<jarl.Result<User, NotFound>>();
+    expectTypeOf(written).toEqualTypeOf<jarl.Result<Post[], Timeout>>();
+    expectTypeOf(scored).toEqualTypeOf<jarl.Result<number, Invalid>>();
+
+    if (!jarl.error.is(found, NotFound)) {
+      throw new Error("expected NotFound");
+    }
+    expect(found.error.id).toBe("ghost");
+
+    expect(() => {
+      // @ts-expect-error handling NotFound in found leaves Timeout in written
+      jarl.value(written);
+    }).toThrow(Timeout);
+
+    if (!jarl.error.is(written, Timeout)) {
+      throw new Error("expected Timeout");
+    }
+    expect(written.error.ms).toBe(100);
+
+    if (!jarl.error.is(scored, Invalid)) {
+      expectTypeOf(scored).toEqualTypeOf<{ ok: true; value: number }>();
+      throw new Error("expected Invalid");
+    }
+    expect(scored.error.reason).toBe("too long");
+  });
+
+  it("rejects when a function rejects instead of returning a result", async () => {
+    const broken = async (id: string): Promise<jarl.Result<string, never>> => {
+      throw new Error(`broken ${id}`);
+    };
+
+    await expect(jarl.all(user, broken)("7")).rejects.toThrow("broken 7");
+  });
+
+  it("refuses functions that cannot take the same arguments", () => {
+    const double = jarl.fn(async (n: number) => n * 2);
+
+    // @ts-expect-error user takes a string, but double takes a number
+    jarl.all(user, double);
+  });
+
+  it("needs at least one function", () => {
+    // @ts-expect-error there is nothing to call
+    jarl.all();
+  });
+});
+
 describe("parseJSON", () => {
   it("parses json from a promise", async () => {
     const result = await jarl.parseJSON<{ n: number }>(

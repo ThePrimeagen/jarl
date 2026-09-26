@@ -141,6 +141,43 @@ function pipe(
   };
 }
 
+type AnyResultFn = (...args: never[]) => Promise<Result<unknown, unknown>>;
+
+// Each function's own result, read off its return type so its errors stay
+// exactly as that function declared them.
+type Results<Fns extends readonly AnyResultFn[]> = {
+  -readonly [K in keyof Fns]: Awaited<ReturnType<Fns[K]>>;
+};
+
+// The parameters of the first function every function can be called with.
+// Computed rather than inferred: inference cannot choose between `[]` and
+// `[id: string]`, though a function taking nothing accepts either. When none
+// fits, the first function's parameters make the mismatch an argument error.
+type SharedArgs<
+  Fns extends readonly AnyResultFn[],
+  Rest extends readonly AnyResultFn[] = Fns,
+> = Rest extends readonly [
+  infer F extends AnyResultFn,
+  ...infer Tail extends readonly AnyResultFn[],
+]
+  ? Fns[number] extends (...args: Parameters<F>) => unknown
+    ? Parameters<F>
+    : SharedArgs<Fns, Tail>
+  : Parameters<Fns[0]>;
+
+function all<Fns extends readonly [AnyResultFn, ...AnyResultFn[]]>(
+  ...fns: Fns &
+    readonly ((
+      ...args: SharedArgs<Fns>
+    ) => Promise<Result<unknown, unknown>>)[]
+): (...args: SharedArgs<Fns>) => Promise<Results<Fns>>;
+
+function all(
+  ...fns: AnyResultFn[]
+): (...args: never[]) => Promise<Result<unknown, unknown>[]> {
+  return async (...args) => Promise.all(fns.map((call) => call(...args)));
+}
+
 async function parseJSON<T = unknown>(
   input: string | Promise<string>,
 ): Promise<Result<T, JsonError>> {
@@ -286,6 +323,7 @@ const error = { define, is };
 
 export {
   JsonError,
+  all,
   err,
   error,
   fn,
