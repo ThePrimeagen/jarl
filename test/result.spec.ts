@@ -180,3 +180,76 @@ describe("ok and err", () => {
     expect(result.error.reason).toBe("no");
   });
 });
+
+describe("forget", () => {
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it("calls the function with the arguments and returns before it finishes", async () => {
+    const release = Promise.withResolvers<void>();
+    const calls: Array<[string, number]> = [];
+    let finished = false;
+    const save = async (id: string, count: number) => {
+      calls.push([id, count]);
+      await release.promise;
+      finished = true;
+    };
+
+    const returned = jarl.forget(save, "7", 3);
+
+    expect(returned).toBeUndefined();
+    expect(calls).toEqual([["7", 3]]);
+    expect(finished).toBe(false);
+
+    release.resolve();
+    await settle();
+    expect(finished).toBe(true);
+  });
+
+  it("ignores a rejected promise", async () => {
+    const unhandled: unknown[] = [];
+    const track = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", track);
+
+    try {
+      jarl.forget(async (id: string) => {
+        throw new NotFound(id);
+      }, "7");
+      await settle();
+    } finally {
+      process.off("unhandledRejection", track);
+    }
+
+    expect(unhandled).toEqual([]);
+  });
+
+  it("ignores a function that throws before returning its promise", () => {
+    const explode = (id: string): Promise<void> => {
+      throw new NotFound(id);
+    };
+
+    expect(() => jarl.forget(explode, "7")).not.toThrow();
+  });
+
+  it("returns void", () => {
+    const proof: Assert<Equal<ReturnType<typeof jarl.forget>, void>> = true;
+
+    expect(proof).toBe(true);
+  });
+
+  it("only accepts an async function and exactly its arguments", () => {
+    const save = async (_id: string, _count: number) => {};
+
+    const misuse = () => {
+      // @ts-expect-error the function must return a promise
+      jarl.forget((id: string) => id, "7");
+      // @ts-expect-error every argument is required
+      jarl.forget(save, "7");
+      // @ts-expect-error the arguments must match the parameters
+      jarl.forget(save, 7, 3);
+      // @ts-expect-error no arguments beyond the parameters
+      jarl.forget(save, "7", 3, true);
+    };
+
+    expect(misuse).toBeTypeOf("function");
+  });
+});
