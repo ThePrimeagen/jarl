@@ -31,6 +31,106 @@ describe("fn", () => {
   });
 });
 
+describe("exec", () => {
+  it("calls the function once with no arguments and resolves to its value", async () => {
+    const calls: unknown[][] = [];
+    const query = async (...args: unknown[]) => {
+      calls.push(args);
+      return "rows";
+    };
+
+    const result = await jarl.exec(query);
+
+    expect(calls).toEqual([[]]);
+    expect(jarl.unwrap(result)).toBe("rows");
+  });
+
+  it("turns a rejection into the error mapError returns", async () => {
+    const caught: unknown[] = [];
+    const failed = (error: unknown) => {
+      caught.push(error);
+      return new NotFound("7");
+    };
+
+    const result = await jarl.exec(async () => {
+      throw new Invalid("bad row");
+    }, failed);
+
+    if (!jarl.is_err(result)) {
+      throw new Error("expected err");
+    }
+    expect(result.error).toBeInstanceOf(NotFound);
+    expect(result.error.id).toBe("7");
+    expect(caught).toHaveLength(1);
+    expect(caught[0]).toBeInstanceOf(Invalid);
+  });
+
+  it("keeps the caught value as the error without mapError", async () => {
+    const thrown = new Invalid("bad row");
+
+    const result = await jarl.exec(async () => {
+      throw thrown;
+    });
+
+    expectTypeOf(result).toEqualTypeOf<jarl.Result<never, unknown>>();
+    if (!jarl.is_err(result)) {
+      throw new Error("expected err");
+    }
+    expect(result.error).toBe(thrown);
+  });
+
+  it("resolves to an error when the function throws before returning its promise", async () => {
+    const explode = (): Promise<string> => {
+      throw new Invalid("sync");
+    };
+
+    const result = await jarl.exec(explode, () => new NotFound("7"));
+
+    expect(jarl.error.is(result, NotFound)).toBe(true);
+  });
+
+  it("rejects when mapError itself throws, like fn", async () => {
+    const broken = new Error("mapError broke");
+    const failing = async () => {
+      throw new Invalid("bad row");
+    };
+    const mapError = () => {
+      throw broken;
+    };
+
+    await expect(jarl.exec(failing, mapError)).rejects.toBe(broken);
+    await expect(jarl.fn(failing, mapError)()).rejects.toBe(broken);
+  });
+
+  it("is typed the same as calling fn straight away", () => {
+    const query = async () => [{ id: "7" }];
+    const failed = () => new NotFound("7");
+
+    expectTypeOf(jarl.exec(query, failed)).toEqualTypeOf<
+      Promise<jarl.Result<{ id: string }[], NotFound>>
+    >();
+    expectTypeOf(jarl.exec(query, failed)).toEqualTypeOf(
+      jarl.fn(query, failed)(),
+    );
+    expectTypeOf(jarl.exec(query)).toEqualTypeOf(jarl.fn(query)());
+  });
+
+  it("only accepts an async function that takes no arguments", () => {
+    const misuse = () => {
+      // @ts-expect-error the function must return a promise
+      jarl.exec(() => "rows");
+      // @ts-expect-error there are no arguments to pass it
+      jarl.exec(async (id: string) => id);
+      // @ts-expect-error mapError only receives the caught error
+      jarl.exec(async () => "rows", (_error: unknown, id: string) => id);
+      // @ts-expect-error there is no curried call
+      jarl.exec(async () => "rows")();
+    };
+
+    expect(misuse).toBeTypeOf("function");
+  });
+});
+
 describe("pipe", () => {
   it("chains each resolved value into the next step", async () => {
     const length = jarl.fn(
