@@ -70,6 +70,20 @@ function fn<A extends unknown[], T, E>(
   };
 }
 
+function exec<T, E>(
+  inner: () => Promise<T>,
+  mapError: (error: unknown) => E,
+): Promise<Result<T, E>>;
+
+function exec<T>(inner: () => Promise<T>): Promise<Result<T, unknown>>;
+
+function exec<T, E>(
+  inner: () => Promise<T>,
+  mapError?: (error: unknown) => E,
+): Promise<Result<T, E | unknown>> {
+  return mapError ? fn(inner, mapError)() : fn(inner)();
+}
+
 function pipe<A extends unknown[], T, E>(
   first: ResultFn<A, T, E>,
 ): ResultFn<A, T, E>;
@@ -340,6 +354,7 @@ export {
   all,
   err,
   error,
+  exec,
   fn,
   forget,
   is_err,
